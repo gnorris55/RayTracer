@@ -177,7 +177,7 @@ glm::vec3 getPixelColor(Sphere currSphere, float intersection, glm::vec4 dirVec,
 	if (n != 0) {
 
 		glm::vec4 reflection = -2*(glm::dot(N, dirVec))*N + dirVec;
-		glm::vec3 reflectedColor = rayTrace(reflection, P, 0.1, n-1);
+		glm::vec3 reflectedColor = rayTrace(reflection, P, 0.0001, n-1);
 
 		color += reflectedColor*currSphere.kr;
 	}
@@ -189,13 +189,11 @@ int getShadowRay(glm::vec4 P, Light light) {
 	
 	// get vector from point to light position
 	glm::vec4 PLight = glm::vec4(light.getPosition(), 1) - P;
-	
-
 
 	// testing all spheres to see if they intersect with the light ray
 	for (int i = 0; i < spheres.size(); i++) {
 		// if the scalar is not equal to zero, there is an object in-between the point and light
-		float th = intersects(spheres[i], PLight, P, 0.1);
+		float th = intersects(spheres[i], PLight, P, 0.0001);
 		if (th != 0.0) {
 			return 0.0;
 		} 
@@ -210,6 +208,7 @@ float intersects(Sphere sphere, glm::vec4 dirVec, glm::vec4 eyePosition, float i
 	//get the inverse of each sphere, apply it to the ray and test intersection on the conanical sphere
 	glm::vec3 cInverse = (sphere.invA * dirVec).xyz();
 	glm::vec3 SInverse = (sphere.invA * eyePosition).xyz();
+	
 
 	// assigning the variables for the quadratic equation
 	float A = pow(glm::length(cInverse), 2);

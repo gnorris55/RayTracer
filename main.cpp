@@ -13,18 +13,22 @@
 #include "objects.h"
 #include "ppm.h"
 
-//functions
+//functionn for raytracing
 void setImage();
-void readFile(char *filename);
 glm::vec3 rayTrace(glm::vec4 dirVec, glm::vec4 eye, float depth, int n);
 glm::vec3 getPixelColor(Sphere currSphere, float intersection, glm::vec4 dirVec, glm::vec4 eye, int n);
+glm::vec3 capRGB(glm::vec3 color);
 int getShadowRay(glm::vec4 P, Light light);
 float intersects(Sphere sphere, glm::vec4 dirVec, glm::vec4 eyePosition, float ignoreDepth);
-glm::vec3 capRGB(glm::vec3 color);
-float getCameraParams(char *fileLine);
-void getScreenRes(char *fileLine);
-void createSphere(char *ptr);
-void createLight(char *ptr);
+
+
+//functions for parsing the file
+void readFile(char *filename);
+void seperateFileLine(char *fileLine, std::vector<std::string> &stringList);
+void allocateFileLineData(std::vector<std::string> stringList);
+void createSphere(std::vector<std::string> attrList);
+void createLight(std::vector<std::string> attrList);
+void assignOtherParams(std::vector<std::string> attrList);
 
 //global variables
 std::vector<Sphere> spheres;
@@ -32,12 +36,11 @@ std::vector<Light> lights;
 std::string outputFile;
 glm::vec3 backColor;
 glm::vec3 ambient;
+int screenRes[2];
 
 const int MAX_DEPTH = 30;
 const int NUM_REFLECTIONS = 3;
 const glm::vec4 EYE_POSITION = glm::vec4(0.0, 0.0, 0.0, 1.0);
-
-int screenRes[2];
 
 
 int main(int argc, char *argv[]) {
@@ -67,14 +70,15 @@ void setImage() {
 			float N = screen.near;
 
 			glm::vec4 dirVec = glm::vec4(uc, vr, -N, 0);
-			glm::vec3 color = rayTrace(dirVec, EYE_POSITION, 1, NUM_REFLECTIONS+1);
+
+			dirVec = glm::normalize(dirVec);
+			glm::vec3 color = rayTrace(dirVec, EYE_POSITION, 1.0, NUM_REFLECTIONS+1);
 		
 				
 			int R = (int)(color.x * 255);
 			int G = (int)(color.y * 255);
 			int B = (int)(color.z * 255);
 
-			//std::cout << R << ", " << G << ", " << B << "\n";
 			pixels[index++] = char(R);
 			pixels[index++] = char(G);
 			pixels[index++] = char(B);
@@ -91,7 +95,7 @@ glm::vec3 rayTrace(glm::vec4 dirVec, glm::vec4 eye, float depth, int n) {
 	
 	std::vector<float> rootValues;
 	std::vector<int> sphereNum;
-	
+		
 	//determining if the ray intersects with sphere(s)
 	for(int i = 0; i < spheres.size(); i++) {
 		float th = intersects(spheres[i], dirVec, eye, depth);
@@ -129,7 +133,8 @@ glm::vec3 getPixelColor(Sphere currSphere, float intersection, glm::vec4 dirVec,
 
 	glm::vec3 color = glm::vec3(0.0, 0.0, 0.0);
 
-	// get point on original sphere	
+	// get point on original sphere
+		
 	glm::vec3 cInverse = (currSphere.invA * dirVec).xyz();
 	glm::vec3 SInverse = (currSphere.invA * eye).xyz();
 	
@@ -146,7 +151,8 @@ glm::vec3 getPixelColor(Sphere currSphere, float intersection, glm::vec4 dirVec,
 	glm::vec3 lightImpact = currSphere.ka*ambient*currSphere.getColor();
 	for (int i = 0; i < lights.size(); i++) {
 		if(getShadowRay(P, lights[i]) == 1) {
-			
+	
+			//TODO: clean up		
 			//helper vectors for specular and diffuse
 			glm::vec4 L = glm::normalize(glm::vec4(lights[i].getPosition(), 1) - P);
 			glm::vec4 V = glm::normalize(eye - P);
@@ -215,7 +221,6 @@ float intersects(Sphere sphere, glm::vec4 dirVec, glm::vec4 eyePosition, float i
 	float B = glm::dot(cInverse, SInverse);
 	float C = pow(glm::length(SInverse), 2) - 1;
 
-	// nuumber of intersections
 	float nIntersect = pow(B, 2) - A*C; 
 	float t1, t2;
 
@@ -226,10 +231,9 @@ float intersects(Sphere sphere, glm::vec4 dirVec, glm::vec4 eyePosition, float i
 		// roots of the conanical sphere
 		t1 = -(B/A) - sqrt(pow(B,2) - A*C)/A;	
 		t2 = -(B/A) + sqrt(pow(B,2) - A*C)/A;	
-		
-		// if the root is less than desired length then ignore it
-		if (t1 < ignoreDepth) t1 = -1;
-		if (t2 < ignoreDepth) t2 = -1;
+			
+		if (t1 <= ignoreDepth) t1 = -1;
+		if (t2 <= ignoreDepth) t2 = -1;
 		
 		// cannot have two negative roots because it scales behind the 
 		// camera or shadow ray, which is undesirable 
@@ -260,186 +264,113 @@ glm::vec3 capRGB(glm::vec3 color) {
 
 }
 
+
 void readFile(char *filename) {
+
 	FILE *fptr;
+
 
 	fptr = fopen(filename, "r");
 	char fileLine[100];
-
-
-	// first six lines for screen parameters
-	screen.near = getCameraParams(fgets(fileLine, 100, fptr));
-	screen.left = getCameraParams(fgets(fileLine, 100, fptr));
-	screen.right = getCameraParams(fgets(fileLine, 100, fptr));
-	screen.bottom = getCameraParams(fgets(fileLine, 100, fptr));
-	screen.top = getCameraParams(fgets(fileLine, 100, fptr));
-
-	getScreenRes(fgets(fileLine, 100, fptr));
 	
-	char *ptr;
+
+	std::vector<std::string> stringList;
+
 	while(fgets(fileLine, 100, fptr)) {
-		
-		ptr = std::strtok(fileLine, " ");
-
-		if(strcmp(ptr, "SPHERE") == 0) {
-			createSphere(ptr);
-		} else if(strcmp(ptr, "LIGHT") == 0) {
-			createLight(ptr);
-		} else {
-			break;
-		}	
+		seperateFileLine(fileLine, stringList);
+		if (stringList.size() > 0) {
+			allocateFileLineData(stringList);
+		}
+		stringList.clear();
 	}
-	
-	// background color	
-	ptr = std::strtok(NULL, " ");
-	backColor.x = atof(ptr);		
-	ptr = std::strtok(NULL, " ");
-	backColor.y = atof(ptr);	
-	ptr = std::strtok(NULL, " ");
-	backColor.z = atof(ptr);	
-	
-	// ambient color
-	fgets(fileLine, 100, fptr);
-	
-	ptr = std::strtok(fileLine, " ");
-	ptr = std::strtok(NULL, " ");
-	ambient.x = atof(ptr);		
-	ptr = std::strtok(NULL, " ");
-	ambient.y = atof(ptr);	
-	ptr = std::strtok(NULL, " ");
-	ambient.z = atof(ptr);	
-
-	// output file name
-	fgets(fileLine, 100, fptr);
-	
-	ptr = std::strtok(fileLine, " ");
-	ptr = std::strtok(NULL, " ");
-	outputFile = ptr;		
-
-	fclose(fptr);
-}
-
-// gets the values of screen
-float getCameraParams(char *fileLine) {
-	
-	char *ptr;
-	ptr = std::strtok(fileLine, " ");
-	ptr = std::strtok(NULL, " ");
-	return atof(ptr);
 
 }
 
-void getScreenRes(char *fileLine) {
+void allocateFileLineData(std::vector<std::string> stringList) {
+	
+	if (stringList[0].compare("SPHERE") == 0) {
+		createSphere(stringList);
+	} else if (stringList[0].compare("LIGHT") == 0){
+		createLight(stringList); 
+	} else {
+		assignOtherParams(stringList);
+	}
 
-	char *ptr;
-	ptr = std::strtok(fileLine, " ");
-	
-	ptr = std::strtok(NULL, " ");
-	screenRes[0] = atoi(ptr);	
-	
-	ptr = std::strtok(NULL, " ");
-	screenRes[1] = atoi(ptr);	
 }
 
-void getVec3(char *fileLine) {
 
-	char *ptr;
-	ptr = std::strtok(fileLine, " ");
+void seperateFileLine(char *fileLine, std::vector<std::string> &stringList) {
 	
-	ptr = std::strtok(NULL, " ");
-	screenRes[0] = atoi(ptr);	
-	
-	ptr = std::strtok(NULL, " ");
-	screenRes[1] = atoi(ptr);	
-	
-	ptr = std::strtok(NULL, " ");
-	screenRes[1] = atoi(ptr);	
+	std::string tempString = ""; 
+	int inString = 0;
+	int i = 0;
+
+	do {
+		
+		if (fileLine[i] == 9 || fileLine[i] == 32 || fileLine[i] == 10) {
+			if (inString == 1) {
+				stringList.push_back(tempString);
+				tempString = "";
+				inString = 0;
+			}
+		} else { 
+			if (inString == 0) {
+				inString = 1;
+			}
+			tempString = tempString + fileLine[i];
+		}
+
+		
+	} while (fileLine[i++] != 10);
 }
 
-void createSphere(char *ptr) {
+void assignOtherParams(std::vector<std::string> attrList) {
+	
+	if (attrList[0].compare("OUTPUT") == 0) outputFile = attrList[1]; 
+	if (attrList[0].compare("LEFT") == 0)  screen.left = std::stoi(attrList[1]);
+	if (attrList[0].compare("RIGHT") == 0) screen.right = std::stoi(attrList[1]); 
+	if (attrList[0].compare("BOTTOM") == 0) screen.bottom = std::stoi(attrList[1]);
+	if (attrList[0].compare("TOP") == 0) screen.top = std::stoi(attrList[1]);
+	if (attrList[0].compare("NEAR") == 0) screen.near = std::stoi(attrList[1]);
+	if (attrList[0].compare("AMBIENT") == 0) ambient = glm::vec3(std::stof(attrList[1]), std::stof(attrList[2]), std::stof(attrList[3]));   
+	if (attrList[0].compare("BACK") == 0) backColor = glm::vec3(std::stof(attrList[1]), std::stof(attrList[2]), std::stof(attrList[3]));
+	if (attrList[0].compare("RES") == 0) {
+		screenRes[0] = std::stoi(attrList[1]);		
+		screenRes[1] = std::stoi(attrList[2]);		
+	}	
+}
 
-	std::string name;
-        glm::vec3 position;
-        glm::vec3 scale;
-        glm::vec3 color;
+
+void createSphere(std::vector<std::string> attrList) {
+
         float ambient, diffuse, specular, Kr, n;
 	
-	//name
-	ptr = std::strtok(NULL, " ");
-	name = ptr;
-
-	//position
-	ptr = std::strtok(NULL, " ");
-	position.x = atof(ptr);	
-	ptr = std::strtok(NULL, " ");
-	position.y = atof(ptr);	
-	ptr = std::strtok(NULL, " ");
-	position.z = atof(ptr);	
-
-	//scale
-	ptr = std::strtok(NULL, " ");
-	scale.x = atof(ptr);	
-	ptr = std::strtok(NULL, " ");
-	scale.y = atof(ptr);	
-	ptr = std::strtok(NULL, " ");
-	scale.z = atof(ptr);	
-
-	//color
-	ptr = std::strtok(NULL, " ");
-	color.x = atof(ptr);	
-	ptr = std::strtok(NULL, " ");
-	color.y = atof(ptr);	
-	ptr = std::strtok(NULL, " ");
-	color.z = atof(ptr);	
+	std::string name = attrList[1];
+	glm::vec3 position = glm::vec3(std::stof(attrList[2]), std::stof(attrList[3]), std::stof(attrList[4]));
+	glm::vec3 scale = glm::vec3(std::stof(attrList[5]), std::stof(attrList[6]), std::stof(attrList[7]));
+	glm::vec3 color = glm::vec3(std::stof(attrList[8]), std::stof(attrList[9]), std::stof(attrList[10]));
        
 	// other	
-	ptr = std::strtok(NULL, " ");
-	ambient  = atof(ptr);
-	ptr = std::strtok(NULL, " ");
-	diffuse = atof(ptr);
-	ptr = std::strtok(NULL, " ");
-	specular = atof(ptr);
-	ptr = std::strtok(NULL, " ");
-	Kr = atof(ptr);
-	ptr = std::strtok(NULL, " ");
-	n = atof(ptr);
+	ambient  = std::stof(attrList[11]);
+	diffuse = std::stof(attrList[12]);
+	specular = std::stof(attrList[13]);
+	Kr = std::stof(attrList[14]);
+	n = std::stof(attrList[15]);
 	
 	Sphere tempSphere = Sphere(name, position, scale, color, ambient,  diffuse,  specular, Kr, n);
-
 	spheres.push_back(tempSphere);
 
 	
 }
 
-void createLight(char *ptr) {
+void createLight(std::vector<std::string> attrList) {
 	
-	char *name;
-        glm::vec3 position;
-        glm::vec3 color;
-	
-	//name
-	ptr = std::strtok(NULL, " ");
-	name = ptr;
+	std::string name = attrList[1];
+	glm::vec3 position = glm::vec3(std::stof(attrList[2]), std::stof(attrList[3]), std::stof(attrList[4]));
+	glm::vec3 color = glm::vec3(std::stof(attrList[5]), std::stof(attrList[6]), std::stof(attrList[7]));
 
-	//position
-	ptr = std::strtok(NULL, " ");
-	position.x = atof(ptr);	
-	ptr = std::strtok(NULL, " ");
-	position.y = atof(ptr);	
-	ptr = std::strtok(NULL, " ");
-	position.z = atof(ptr);	
-
-	//color
-	ptr = std::strtok(NULL, " ");
-	color.x = atof(ptr);	
-	ptr = std::strtok(NULL, " ");
-	color.y = atof(ptr);	
-	ptr = std::strtok(NULL, " ");
-	color.z = atof(ptr);	
-       
-	
 	Light tempLight = Light(name, position, color);
-
 	lights.push_back(tempLight);
 
 }
+
